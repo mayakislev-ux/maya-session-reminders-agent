@@ -1,0 +1,153 @@
+"""
+הודעת פודקאסט - שליחה אוטומטית בפועל (לא טיוטה).
+נשלחת יום *אחרי* מפגש פרונטלי (לא באותו יום, לא יום לפני) בשעה 9:00 בבוקר.
+שולחת שתי הודעות נפרדות ברצף: (1) תמונת הבאנר + כיתוב ההזמנה להאזין,
+(2) קובץ האודיו של הפרק עצמו - בלי כיתוב, כי וואטסאפ לא תומך בכיתוב על קבצי אודיו.
+
+לכל מפגש פרונטלי שהיה אתמול (לפי לוח-מפגשים.csv):
+- אם יש chatId_ווטסאפ אמיתי (מסתיים ב-@g.us) וגם קיימת תבנית פודקאסט לסוג המפגש
+  -> שולח בפועל דרך Green API.
+- אם משהו חסר -> לא שולח כלום, רק רושם ליומן.
+"""
+
+import csv
+import json
+import subprocess
+import sys
+from datetime import date, datetime, timedelta
+from pathlib import Path
+
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+HERE = Path(__file__).parent
+SCHEDULE_FILE = HERE / "לוח-מפגשים.csv"
+PODCAST_TEMPLATES_DIR = HERE / "תבניות-הודעות" / "פודקאסט-אחרי-מפגש"
+MEDIA_DIR = HERE / "תבניות-הודעות"
+LOG_FILE = HERE / "יומן-שליחות.log"
+CREDENTIALS_FILE = Path.home() / ".claude" / "local-secrets" / "green-api-credentials.json"
+
+MIME_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png",
+              ".mp4": "video/mp4", ".ogg": "audio/ogg", ".mp3": "audio/mpeg"}
+
+
+def log(line: str) -> None:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with LOG_FILE.open("a", encoding="utf-8") as f:
+        f.write(f"[{stamp}] {line}\n")
+    print(line)
+
+
+def load_credentials() -> dict:
+    import os
+    env_id = os.environ.get("GREEN_API_ID_INSTANCE")
+    env_token = os.environ.get("GREEN_API_TOKEN_INSTANCE")
+    if env_id and env_token:
+        return {"idInstance": env_id, "apiTokenInstance": env_token}
+    return json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+
+
+def load_podcast_caption(session_type: str) -> str | None:
+    path = PODCAST_TEMPLATES_DIR / f"{session_type}.txt"
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8")
+
+
+def send_media(chat_id: str, media_path: Path, caption: str | None) -> tuple[bool, str]:
+    creds = load_credentials()
+    id_instance = creds["idInstance"]
+    token = creds["apiTokenInstance"]
+    mime_type = MIME_TYPES.get(media_path.suffix.lower(), "application/octet-stream")
+
+    url = f"https://media.green-api.com/waInstance{id_instance}/SendFileByUpload/{token}"
+    cmd = [
+        "curl", "-s", "-X", "POST", url,
+        "-F", f"chatId={chat_id}",
+        "-F", f"file=@{media_path.as_posix().replace('/c/', 'C:/')};type={mime_type}",
+    ]
+    caption_tmp = None
+    if caption:
+        caption_tmp = HERE / "_tmp_caption.txt"
+        caption_tmp.write_text(caption, encoding="utf-8")
+        cmd += ["-F", f"caption=<{caption_tmp.as_posix().replace('/c/', 'C:/')}"]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        ok = '"idMessage"' in result.stdout
+        return ok, result.stdout
+    finally:
+        if caption_tmp:
+            caption_tmp.unlink(missing_ok=True)
+
+
+def main():
+    if len(sys.argv) > 1:
+        today = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
+    else:
+        today = date.today()
+
+    schedule_file = Path(sys.argv[2]) if len(sys.argv) > 2 else SCHEDULE_FILE
+    if not schedule_file.exists():
+        log(f"שגיאה: לא נמצא {schedule_file.name}")
+        return
+
+    import os
+    has_env_creds = os.environ.get("GREEN_API_ID_INSTANCE") and os.environ.get("GREEN_API_TOKEN_INSTANCE")
+    if not has_env_creds and not CREDENTIALS_FILE.exists():
+        log(f"שגיאה: אין פרטי גישה - לא ב-GREEN_API_ID_INSTANCE/GREEN_API_TOKEN_INSTANCE ולא ב-{CREDENTIALS_FILE}")
+        return
+
+    due = []
+    with schedule_file.open(encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            session_type = row["סוג_מפגש"]
+            if not session_type.startswith("פרונטלי"):
+                continue
+            session_date = datetime.strptime(row["תאריך_מפגש"], "%Y-%m-%d").date()
+            if session_date + timedelta(days=1) == today:  # יום אחרי המפגש
+                due.append((row, session_date))
+
+    if not due:
+        log(f"היום {today.isoformat()} - אין מפגש פרונטלי שהיה אתמול, אין הודעת פודקאסט לשלוח.")
+        return
+
+    for row, session_date in due:
+        chat_id = row.get("chatId_ווטסאפ", "").strip()
+        session_type = row["סוג_מפגש"]
+        label = f"מחזור '{row['מחזור']}' מפגש {session_date} ({session_type})"
+
+        if not chat_id.endswith("@g.us"):
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין chatId אמיתי בטבלה.")
+            continue
+
+        caption = load_podcast_caption(session_type)
+        if caption is None:
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין תבנית פודקאסט עבור סוג המפגש הזה.")
+            continue
+
+        image_name = row.get("פודקאסט_תמונה", "").strip()
+        audio_name = row.get("פודקאסט_אודיו", "").strip()
+        image_path = MEDIA_DIR / image_name if image_name else None
+        audio_path = MEDIA_DIR / audio_name if audio_name else None
+
+        if not image_name or not image_path.exists():
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - קובץ תמונת הבאנר חסר ({image_name}).")
+            continue
+        if not audio_name or not audio_path.exists():
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - קובץ האודיו חסר ({audio_name}).")
+            continue
+
+        ok1, raw1 = send_media(chat_id, image_path, caption)
+        if not ok1:
+            log(f"❌ שגיאה בשליחת באנר הפודקאסט: {label} -> {raw1}")
+            continue
+
+        ok2, raw2 = send_media(chat_id, audio_path, None)
+        if ok2:
+            log(f"✅ נשלחה הודעת פודקאסט (באנר+אודיו): {label} -> {chat_id}")
+        else:
+            log(f"⚠️ הבאנר נשלח אבל האודיו נכשל: {label} -> {raw2}")
+
+
+if __name__ == "__main__":
+    main()
