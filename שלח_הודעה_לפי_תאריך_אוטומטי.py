@@ -68,8 +68,9 @@ def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None)
                 "curl", "-s", "-X", "POST", url,
                 "-F", f"chatId={chat_id}",
                 "-F", f"file=@{media_path.as_posix().replace('/c/', 'C:/')};type={mime_type}",
-                "-F", f"caption=<{caption_tmp.as_posix().replace('/c/', 'C:/')}",
             ]
+            if caption_text:  # וואטסאפ לא תומך בכיתוב על אודיו - לא לצרף כיתוב ריק
+                cmd += ["-F", f"caption=<{caption_tmp.as_posix().replace('/c/', 'C:/')}"]
         else:
             url = f"https://api.green-api.com/waInstance{id_instance}/SendMessage/{token}"
             payload = {"chatId": chat_id, "message": caption_text}
@@ -102,12 +103,21 @@ def main():
         log(f"שגיאה: אין פרטי גישה - לא ב-GREEN_API_ID_INSTANCE/GREEN_API_TOKEN_INSTANCE ולא ב-{CREDENTIALS_FILE}")
         return
 
+    # RUN_HOUR_FILTER: כמה שורות בטבלה יכולות להיות מוגדרות לשעות שונות (למשל 09:00 מול 16:00),
+    # אבל הסקריפט לא בודק שעה בעצמו - רק תאריך. אם כמה רוטינות ענן מריצות את הסקריפט הזה
+    # בשעות שונות ביום, צריך RUN_HOUR_FILTER כדי שכל רוטינה תיקח רק את השורות ששייכות לשעה שלה,
+    # אחרת אותה שורה עלולה להישלח פעמיים (פעם מכל רוטינה).
+    run_hour_filter = os.environ.get("RUN_HOUR_FILTER", "").strip()
+
     due = []
     with schedule_file.open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
             send_date = datetime.strptime(row["תאריך_שליחה"], "%Y-%m-%d").date()
-            if send_date == today:
-                due.append(row)
+            if send_date != today:
+                continue
+            if run_hour_filter and not row["שעה"].strip().startswith(run_hour_filter):
+                continue
+            due.append(row)
 
     if not due:
         log(f"היום {today.isoformat()} - אין הודעות-לפי-תאריך שדורשות שליחה.")
@@ -133,16 +143,31 @@ def main():
             log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - מוגדרת מדיה '{media_name}' אבל הקובץ לא נמצא.")
             continue
 
+        audio_name = row.get("אודיו", "").strip()
+        audio_path = TEMPLATES_DIR / audio_name if audio_name else None
+        if audio_name and (audio_path is None or not audio_path.exists()):
+            log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - מוגדר אודיו '{audio_name}' אבל הקובץ לא נמצא.")
+            continue
+
         if os.environ.get("CONFIRM_LIVE_SEND") != "1":
+            extra = " + אודיו בנפרד" if audio_path else ""
             log(f"🧪 DRY RUN (CONFIRM_LIVE_SEND לא מוגדר - לא נשלח בפועל): "
-                f"הייתה נשלחת הודעה-לפי-תאריך: {label} -> {chat_id}")
+                f"הייתה נשלחת הודעה-לפי-תאריך{extra}: {label} -> {chat_id}")
             continue
 
         ok, raw = send_via_green_api(chat_id, template, media_path)
-        if ok:
-            log(f"✅ נשלחה הודעה-לפי-תאריך: {label} -> {chat_id}")
-        else:
+        if not ok:
             log(f"❌ שגיאה בשליחת הודעה-לפי-תאריך: {label} -> {raw}")
+            continue
+
+        if audio_path:
+            ok2, raw2 = send_via_green_api(chat_id, "", audio_path)
+            if ok2:
+                log(f"✅ נשלחה הודעה-לפי-תאריך (כולל אודיו): {label} -> {chat_id}")
+            else:
+                log(f"⚠️ הכיתוב+מדיה נשלחו אבל האודיו נכשל: {label} -> {raw2}")
+        else:
+            log(f"✅ נשלחה הודעה-לפי-תאריך: {label} -> {chat_id}")
 
 
 if __name__ == "__main__":
