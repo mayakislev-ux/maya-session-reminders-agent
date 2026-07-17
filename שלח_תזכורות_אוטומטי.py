@@ -150,16 +150,17 @@ def main():
     for row, session_date in due:
         chat_id = row.get("chatId_ווטסאפ", "").strip()
         session_type = row["סוג_מפגש"]
+        reminder_name = row.get("תזכורת_שם", "").strip() or session_type
 
         if not chat_id.endswith("@g.us"):
             log(f"⛔ דילוג: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
                 f"אין chatId אמיתי בטבלה, לא שולח לשום מקום.")
             continue
 
-        template = load_template(session_type)
+        template = load_template(reminder_name)
         if template is None:
             log(f"⛔ דילוג: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"אין תבנית הודעה עבור סוג המפגש הזה. צריך טקסט אמיתי ממאיה לפני שזה יכול להישלח.")
+                f"אין תבנית '{reminder_name}'. צריך טקסט אמיתי ממאיה לפני שזה יכול להישלח.")
             continue
 
         caption = render(template, row, session_date, today)

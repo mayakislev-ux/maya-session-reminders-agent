@@ -90,7 +90,8 @@ def main():
 
     lines = [f"# טיוטות תזכורות שהוכנו ב-{today.isoformat()}", ""]
     for row, session_date in due:
-        template = load_template(row["סוג_מפגש"])
+        reminder_name = row.get("תזכורת_שם", "").strip() or row["סוג_מפגש"]
+        template = load_template(reminder_name)
         draft = render(template, row, session_date, today)
         lines.append(f"## קבוצה: {row['קבוצת_ווטסאפ']} (מחזור: {row['מחזור']}, סוג מפגש: {row['סוג_מפגש']})")
         media = row.get("מדיה_מצורפת", "").strip()
