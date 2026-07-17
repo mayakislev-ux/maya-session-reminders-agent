@@ -50,9 +50,12 @@ def load_template(session_type: str) -> str:
     return text
 
 
-def render(template: str, session: dict, session_date: date) -> str:
+def render(template: str, session: dict, session_date: date, send_date: date) -> str:
     weekday = HEBREW_WEEKDAYS[session_date.weekday()]
+    gap_days = (session_date - send_date).days
+    time_ref = "מחר" if gap_days == 1 else f"ביום {weekday}"
     text = template
+    text = text.replace("{התייחסות_זמן}", time_ref)
     text = text.replace("{יום_בשבוע}", weekday)
     text = text.replace("{תאריך}", session_date.strftime("%d.%m"))
     text = text.replace("{שעה}", session["שעה"])
@@ -88,7 +91,7 @@ def main():
     lines = [f"# טיוטות תזכורות שהוכנו ב-{today.isoformat()}", ""]
     for row, session_date in due:
         template = load_template(row["סוג_מפגש"])
-        draft = render(template, row, session_date)
+        draft = render(template, row, session_date, today)
         lines.append(f"## קבוצה: {row['קבוצת_ווטסאפ']} (מחזור: {row['מחזור']}, סוג מפגש: {row['סוג_מפגש']})")
         media = row.get("מדיה_מצורפת", "").strip()
         if media:

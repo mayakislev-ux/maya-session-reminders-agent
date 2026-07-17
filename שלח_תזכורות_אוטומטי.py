@@ -59,9 +59,14 @@ def load_template(session_type: str) -> str | None:
     return text
 
 
-def render(template: str, session: dict, session_date: date) -> str:
+def render(template: str, session: dict, session_date: date, send_date: date) -> str:
     weekday = HEBREW_WEEKDAYS[session_date.weekday()]
+    # {התייחסות_זמן}: "מחר" כשהתזכורת יוצאת בדיוק יום לפני - "ביום X" כשהיא יוצאת מוקדם יותר
+    # (חריגת שבת: מפגש בראשון -> תזכורת ביום חמישי, 3 ימים לפני, אז לא נכון להגיד "מחר")
+    gap_days = (session_date - send_date).days
+    time_ref = "מחר" if gap_days == 1 else f"ביום {weekday}"
     text = template
+    text = text.replace("{התייחסות_זמן}", time_ref)
     text = text.replace("{יום_בשבוע}", weekday)
     text = text.replace("{תאריך}", session_date.strftime("%d.%m"))
     text = text.replace("{שעה}", session["שעה"])
@@ -157,7 +162,7 @@ def main():
                 f"אין תבנית הודעה עבור סוג המפגש הזה. צריך טקסט אמיתי ממאיה לפני שזה יכול להישלח.")
             continue
 
-        caption = render(template, row, session_date)
+        caption = render(template, row, session_date, today)
 
         media_name = row.get("מדיה_מצורפת", "").strip()
         media_path = MEDIA_DIR / media_name if media_name else None
