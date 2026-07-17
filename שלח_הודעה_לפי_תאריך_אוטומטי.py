@@ -1,15 +1,13 @@
 """
-הודעת משימות/פרק-חדש - שליחה אוטומטית בפועל (לא טיוטה).
-שונה מ-שלח_תזכורות_אוטומטי.py בתזמון: נשלחת ביום המפגש עצמו (לא יום לפני),
-ורק אחרי מפגשים פרונטליים (סוג_מפגש שמתחיל ב"פרונטלי") - לא אחרי זום.
-רצה כרוטינת ענן נפרדת סביב 16:00 שעון ישראל.
+הודעות חד-פעמיות לפי תאריך מדויק (למשל: סיכום שבוע ראשון ביום חמישי).
+בשונה משלושת הסוכנים האחרים - כאן אין חישוב יחסי (יום לפני/אותו יום/יום אחרי מפגש),
+אלא התאמה מדויקת: אם תאריך_שליחה בטבלה == היום, שולחים.
+כללי לכל סוג הודעה חד-פעמית עתידית - לא רק סיכום שבוע 1.
 
-לכל מפגש פרונטלי שחל היום (לפי לוח-מפגשים.csv):
-- אם יש chatId_ווטסאפ אמיתי (מסתיים ב-@g.us) וגם קיימת תבנית משימות לסוג המפגש
-  -> שולח בפועל דרך Green API (מדיה+כיתוב מאוחדים אם מוגדרת מדיה במשימות_מדיה, אחרת טקסט בלבד).
+לכל שורה שחלה היום (לפי הודעות-לפי-תאריך.csv):
+- אם יש chatId_ווטסאפ אמיתי (מסתיים ב-@g.us) וגם קיימת תבנית לסוג ההודעה
+  -> שולח בפועל דרך Green API (מדיה+כיתוב אם מוגדרת מדיה, אחרת טקסט בלבד).
 - אם משהו חסר -> לא שולח כלום, רק רושם ליומן.
-
-אותה הגנה כמו סוכן התזכורות: לעולם לא שולח בלי chatId אמיתי מאומת בטבלה.
 """
 
 import csv
@@ -22,13 +20,13 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 HERE = Path(__file__).parent
-SCHEDULE_FILE = HERE / "לוח-מפגשים.csv"
-TASK_TEMPLATES_DIR = HERE / "תבניות-הודעות" / "משימות-אחרי-מפגש"
-MEDIA_DIR = HERE / "תבניות-הודעות"
+SCHEDULE_FILE = HERE / "הודעות-לפי-תאריך.csv"
+TEMPLATES_DIR = HERE / "תבניות-הודעות"
 LOG_FILE = HERE / "יומן-שליחות.log"
 CREDENTIALS_FILE = Path.home() / ".claude" / "local-secrets" / "green-api-credentials.json"
 
-MIME_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4"}
+MIME_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png",
+              ".mp4": "video/mp4", ".ogg": "audio/ogg", ".mp3": "audio/mpeg"}
 
 
 def log(line: str) -> None:
@@ -47,8 +45,8 @@ def load_credentials() -> dict:
     return json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
 
 
-def load_task_template(session_type: str) -> str | None:
-    path = TASK_TEMPLATES_DIR / f"{session_type}.txt"
+def load_message_template(message_type: str) -> str | None:
+    path = TEMPLATES_DIR / f"{message_type}.txt"
     if not path.exists():
         return None
     return path.read_text(encoding="utf-8")
@@ -107,49 +105,44 @@ def main():
     due = []
     with schedule_file.open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            session_type = row["סוג_מפגש"]
-            if not session_type.startswith("פרונטלי"):
-                continue  # רק אחרי מפגשים פרונטליים, לא אחרי זום
-            session_date = datetime.strptime(row["תאריך_מפגש"], "%Y-%m-%d").date()
-            if session_date == today:  # אותו יום, לא יום לפני
-                due.append((row, session_date))
+            send_date = datetime.strptime(row["תאריך_שליחה"], "%Y-%m-%d").date()
+            if send_date == today:
+                due.append(row)
 
     if not due:
-        log(f"היום {today.isoformat()} - אין מפגש פרונטלי היום, אין הודעת משימות לשלוח.")
+        log(f"היום {today.isoformat()} - אין הודעות-לפי-תאריך שדורשות שליחה.")
         return
 
-    for row, session_date in due:
+    for row in due:
         chat_id = row.get("chatId_ווטסאפ", "").strip()
-        session_type = row["סוג_מפגש"]
+        message_type = row["סוג_הודעה"]
+        label = f"מחזור '{row['מחזור']}' הודעה '{message_type}' ({row['תאריך_שליחה']})"
 
         if not chat_id.endswith("@g.us"):
-            log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"אין chatId אמיתי בטבלה.")
+            log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - אין chatId אמיתי בטבלה.")
             continue
 
-        template = load_task_template(session_type)
+        template = load_message_template(message_type)
         if template is None:
-            log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"אין תבנית משימות עבור סוג המפגש הזה ב-תבניות-הודעות/משימות-אחרי-מפגש/.")
+            log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - אין תבנית עבור סוג ההודעה הזה.")
             continue
 
-        media_name = row.get("משימות_מדיה", "").strip()
-        media_path = MEDIA_DIR / media_name if media_name else None
+        media_name = row.get("מדיה", "").strip()
+        media_path = TEMPLATES_DIR / media_name if media_name else None
         if media_name and (media_path is None or not media_path.exists()):
-            log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"מוגדרת מדיה '{media_name}' אבל הקובץ לא נמצא.")
+            log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - מוגדרת מדיה '{media_name}' אבל הקובץ לא נמצא.")
             continue
 
         if os.environ.get("CONFIRM_LIVE_SEND") != "1":
             log(f"🧪 DRY RUN (CONFIRM_LIVE_SEND לא מוגדר - לא נשלח בפועל): "
-                f"הייתה נשלחת הודעת משימות למחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {chat_id}")
+                f"הייתה נשלחת הודעה-לפי-תאריך: {label} -> {chat_id}")
             continue
 
         ok, raw = send_via_green_api(chat_id, template, media_path)
         if ok:
-            log(f"✅ נשלחה הודעת משימות: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {chat_id}")
+            log(f"✅ נשלחה הודעה-לפי-תאריך: {label} -> {chat_id}")
         else:
-            log(f"❌ שגיאה בשליחת הודעת משימות: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {raw}")
+            log(f"❌ שגיאה בשליחת הודעה-לפי-תאריך: {label} -> {raw}")
 
 
 if __name__ == "__main__":

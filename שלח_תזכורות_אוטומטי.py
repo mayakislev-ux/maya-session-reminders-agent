@@ -165,6 +165,11 @@ def main():
                 f"מוגדרת מדיה '{media_name}' אבל הקובץ לא נמצא.")
             continue
 
+        if os.environ.get("CONFIRM_LIVE_SEND") != "1":
+            log(f"🧪 DRY RUN (CONFIRM_LIVE_SEND לא מוגדר - לא נשלח בפועל): "
+                f"היה נשלח למחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {chat_id}")
+            continue
+
         ok, raw = send_via_green_api(chat_id, caption, media_path)
         if ok:
             log(f"✅ נשלח: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {chat_id}")

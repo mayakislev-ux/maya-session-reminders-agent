@@ -137,6 +137,11 @@ def main():
             log(f"⛔ דילוג (הודעת פודקאסט): {label} - קובץ האודיו חסר ({audio_name}).")
             continue
 
+        if os.environ.get("CONFIRM_LIVE_SEND") != "1":
+            log(f"🧪 DRY RUN (CONFIRM_LIVE_SEND לא מוגדר - לא נשלח בפועל): "
+                f"הייתה נשלחת הודעת פודקאסט: {label} -> {chat_id}")
+            continue
+
         ok1, raw1 = send_media(chat_id, image_path, caption)
         if not ok1:
             log(f"❌ שגיאה בשליחת באנר הפודקאסט: {label} -> {raw1}")
