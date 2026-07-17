@@ -1,11 +1,12 @@
 """
 סוכן תזכורות - שליחה אוטומטית בפועל (לא טיוטה).
-רץ כ-Windows Scheduled Task פעם ביום, בלי מגע יד אדם.
+רץ כרוטינת ענן (claude.ai RemoteTrigger) פעם ביום, בלי מגע יד אדם ובלי תלות
+במחשב של מאיה - ר' סקיל session-reminders-agent לפרטי התשתית.
 
 לכל מפגש שדורש תזכורת היום (לפי לוח-מפגשים.csv):
 - אם יש chatId_ווטסאפ אמיתי (מסתיים ב-@g.us) וגם קיימת תבנית לסוג המפגש
-  -> שולח בפועל דרך Green API (תמונה+כיתוב מאוחדים אם יש תמונה, אחרת טקסט בלבד).
-- אם משהו חסר (chatId ריק / תבנית חסרה / קובץ תמונה חסר)
+  -> שולח בפועל דרך Green API (מדיה+כיתוב מאוחדים אם מוגדרת מדיה - תמונה או וידאו, אחרת טקסט בלבד).
+- אם משהו חסר (chatId ריק / תבנית חסרה / קובץ מדיה חסר)
   -> לא שולח כלום, רק רושם ליומן (log) כדי שמאיה תדע לטפל.
 
 לעולם לא שולח לקבוצה בלי chatId אמיתי מאומת בטבלה - זו ההגנה המרכזית
@@ -27,8 +28,10 @@ SATURDAY = 5
 HERE = Path(__file__).parent
 SCHEDULE_FILE = HERE / "לוח-מפגשים.csv"
 TEMPLATES_DIR = HERE / "תבניות-הודעות"
-IMAGES_DIR = TEMPLATES_DIR / "תמונות"
+MEDIA_DIR = TEMPLATES_DIR  # מדיה_מצורפת מכיל נתיב יחסי לתת-תיקייה, למשל "תמונות/x.jpeg" או "וידאו/y.mp4"
 LOG_FILE = HERE / "יומן-שליחות.log"
+
+MIME_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4"}
 CREDENTIALS_FILE = Path.home() / ".claude" / "local-secrets" / "green-api-credentials.json"
 
 
@@ -77,7 +80,7 @@ def load_credentials() -> dict:
     return json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
 
 
-def send_via_green_api(chat_id: str, caption_text: str, image_path: Path | None) -> tuple[bool, str]:
+def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None) -> tuple[bool, str]:
     creds = load_credentials()
     id_instance = creds["idInstance"]
     token = creds["apiTokenInstance"]
@@ -86,12 +89,13 @@ def send_via_green_api(chat_id: str, caption_text: str, image_path: Path | None)
     caption_tmp.write_text(caption_text, encoding="utf-8")
 
     try:
-        if image_path and image_path.exists():
+        if media_path and media_path.exists():
+            mime_type = MIME_TYPES.get(media_path.suffix.lower(), "application/octet-stream")
             url = f"https://media.green-api.com/waInstance{id_instance}/SendFileByUpload/{token}"
             cmd = [
                 "curl", "-s", "-X", "POST", url,
                 "-F", f"chatId={chat_id}",
-                "-F", f"file=@{image_path.as_posix().replace('/c/', 'C:/')};type=image/jpeg",
+                "-F", f"file=@{media_path.as_posix().replace('/c/', 'C:/')};type={mime_type}",
                 "-F", f"caption=<{caption_tmp.as_posix().replace('/c/', 'C:/')}",
             ]
         else:
@@ -154,14 +158,14 @@ def main():
 
         caption = render(template, row, session_date)
 
-        image_name = row.get("תמונה_מצורפת", "").strip()
-        image_path = IMAGES_DIR / image_name if image_name else None
-        if image_name and (image_path is None or not image_path.exists()):
+        media_name = row.get("מדיה_מצורפת", "").strip()
+        media_path = MEDIA_DIR / media_name if media_name else None
+        if media_name and (media_path is None or not media_path.exists()):
             log(f"⛔ דילוג: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"מוגדרת תמונה '{image_name}' אבל הקובץ לא נמצא.")
+                f"מוגדרת מדיה '{media_name}' אבל הקובץ לא נמצא.")
             continue
 
-        ok, raw = send_via_green_api(chat_id, caption, image_path)
+        ok, raw = send_via_green_api(chat_id, caption, media_path)
         if ok:
             log(f"✅ נשלח: מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) -> {chat_id}")
         else:

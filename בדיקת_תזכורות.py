@@ -90,9 +90,9 @@ def main():
         template = load_template(row["סוג_מפגש"])
         draft = render(template, row, session_date)
         lines.append(f"## קבוצה: {row['קבוצת_ווטסאפ']} (מחזור: {row['מחזור']}, סוג מפגש: {row['סוג_מפגש']})")
-        image = row.get("תמונה_מצורפת", "").strip()
-        if image:
-            lines.append(f"**לצרף גם תמונה:** {image}")
+        media = row.get("מדיה_מצורפת", "").strip()
+        if media:
+            lines.append(f"**לצרף גם מדיה:** {media}")
         lines.append("")
         lines.append("```")
         lines.append(draft)
