@@ -87,6 +87,7 @@ def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None)
 
     caption_tmp = HERE / "_tmp_caption.txt"
     caption_tmp.write_text(caption_text, encoding="utf-8")
+    payload_file = HERE / "_tmp_payload.json"
 
     try:
         if media_path and media_path.exists():
@@ -101,7 +102,6 @@ def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None)
         else:
             url = f"https://api.green-api.com/waInstance{id_instance}/SendMessage/{token}"
             payload = {"chatId": chat_id, "message": caption_text}
-            payload_file = HERE / "_tmp_payload.json"
             payload_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
             cmd = ["curl", "-s", "-X", "POST", url, "-H", "Content-Type: application/json",
                    "--data-binary", f"@{payload_file}"]
@@ -111,6 +111,7 @@ def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None)
         return ok, result.stdout
     finally:
         caption_tmp.unlink(missing_ok=True)
+        payload_file.unlink(missing_ok=True)
 
 
 def main():
