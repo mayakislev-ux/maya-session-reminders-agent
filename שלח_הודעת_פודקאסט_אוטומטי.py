@@ -114,15 +114,20 @@ def main():
     for row, session_date in due:
         chat_id = row.get("chatId_ווטסאפ", "").strip()
         session_type = row["סוג_מפגש"]
+        podcast_name = row.get("פודקאסט_שם", "").strip()
         label = f"מחזור '{row['מחזור']}' מפגש {session_date} ({session_type})"
 
         if not chat_id.endswith("@g.us"):
             log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין chatId אמיתי בטבלה.")
             continue
 
-        caption = load_podcast_caption(session_type)
+        if not podcast_name:
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין ערך בעמודת פודקאסט_שם - לא הוגדר פודקאסט למפגש הזה.")
+            continue
+
+        caption = load_podcast_caption(podcast_name)
         if caption is None:
-            log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין תבנית פודקאסט עבור סוג המפגש הזה.")
+            log(f"⛔ דילוג (הודעת פודקאסט): {label} - אין תבנית '{podcast_name}' ב-תבניות-הודעות/פודקאסט-אחרי-מפגש/.")
             continue
 
         image_name = row.get("פודקאסט_תמונה", "").strip()

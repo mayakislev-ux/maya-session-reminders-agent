@@ -107,30 +107,34 @@ def main():
     due = []
     with schedule_file.open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            session_type = row["סוג_מפגש"]
-            if not session_type.startswith("פרונטלי"):
-                continue  # רק אחרי מפגשים פרונטליים, לא אחרי זום
+            # אחרי כל סוג מפגש - פרונטלי או זום, לא רק פרונטלי
             session_date = datetime.strptime(row["תאריך_מפגש"], "%Y-%m-%d").date()
             if session_date == today:  # אותו יום, לא יום לפני
                 due.append((row, session_date))
 
     if not due:
-        log(f"היום {today.isoformat()} - אין מפגש פרונטלי היום, אין הודעת משימות לשלוח.")
+        log(f"היום {today.isoformat()} - אין מפגש היום, אין הודעת משימות לשלוח.")
         return
 
     for row, session_date in due:
         chat_id = row.get("chatId_ווטסאפ", "").strip()
         session_type = row["סוג_מפגש"]
+        task_name = row.get("משימות_שם", "").strip()
 
         if not chat_id.endswith("@g.us"):
             log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
                 f"אין chatId אמיתי בטבלה.")
             continue
 
-        template = load_task_template(session_type)
+        if not task_name:
+            log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
+                f"אין ערך בעמודת משימות_שם - לא הוגדרה הודעת משימות למפגש הזה.")
+            continue
+
+        template = load_task_template(task_name)
         if template is None:
             log(f"⛔ דילוג (הודעת משימות): מחזור '{row['מחזור']}' מפגש {session_date} ({session_type}) - "
-                f"אין תבנית משימות עבור סוג המפגש הזה ב-תבניות-הודעות/משימות-אחרי-מפגש/.")
+                f"אין תבנית '{task_name}' ב-תבניות-הודעות/משימות-אחרי-מפגש/.")
             continue
 
         media_name = row.get("משימות_מדיה", "").strip()
