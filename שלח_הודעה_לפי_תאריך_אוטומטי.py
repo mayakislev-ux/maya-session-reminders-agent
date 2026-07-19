@@ -87,6 +87,39 @@ def send_via_green_api(chat_id: str, caption_text: str, media_path: Path | None)
         payload_file.unlink(missing_ok=True)
 
 
+def send_poll_via_green_api(chat_id: str, question: str, options: list[str]) -> tuple[bool, str]:
+    creds = load_credentials()
+    id_instance = creds["idInstance"]
+    token = creds["apiTokenInstance"]
+
+    url = f"https://api.green-api.com/waInstance{id_instance}/SendPoll/{token}"
+    payload_file = HERE / "_tmp_poll_payload.json"
+    payload = {
+        "chatId": chat_id,
+        "message": question,
+        "options": [{"optionName": opt} for opt in options],
+    }
+    payload_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    try:
+        cmd = ["curl", "-s", "-X", "POST", url, "-H", "Content-Type: application/json",
+               "--data-binary", f"@{payload_file}"]
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        ok = '"idMessage"' in result.stdout
+        return ok, result.stdout
+    finally:
+        payload_file.unlink(missing_ok=True)
+
+
+def parse_poll_template(template: str) -> tuple[str, list[str]] | None:
+    """תבנית פול: שורה ראשונה '###POLL###', שורה שנייה השאלה, שאר השורות הלא-ריקות = אפשרויות."""
+    lines = template.splitlines()
+    if not lines or lines[0].strip() != "###POLL###":
+        return None
+    question = lines[1].strip() if len(lines) > 1 else ""
+    options = [line.strip() for line in lines[2:] if line.strip()]
+    return question, options
+
+
 def main():
     if len(sys.argv) > 1:
         today = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
@@ -136,6 +169,20 @@ def main():
         template = load_message_template(message_type)
         if template is None:
             log(f"⛔ דילוג (הודעה-לפי-תאריך): {label} - אין תבנית עבור סוג ההודעה הזה.")
+            continue
+
+        poll = parse_poll_template(template)
+        if poll is not None:
+            question, options = poll
+            if os.environ.get("CONFIRM_LIVE_SEND") != "1":
+                log(f"🧪 DRY RUN (CONFIRM_LIVE_SEND לא מוגדר - לא נשלח בפועל): "
+                    f"היה נשלח פול אמיתי: {label} -> {chat_id}")
+                continue
+            ok, raw = send_poll_via_green_api(chat_id, question, options)
+            if ok:
+                log(f"✅ נשלח פול אמיתי: {label} -> {chat_id}")
+            else:
+                log(f"❌ שגיאה בשליחת פול: {label} -> {raw}")
             continue
 
         media_name = row.get("מדיה", "").strip()
