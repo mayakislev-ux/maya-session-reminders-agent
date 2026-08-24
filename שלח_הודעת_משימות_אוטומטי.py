@@ -1,10 +1,13 @@
 """
 הודעת משימות/פרק-חדש - שליחה אוטומטית בפועל (לא טיוטה).
 שונה מ-שלח_תזכורות_אוטומטי.py בתזמון: נשלחת ביום המפגש עצמו (לא יום לפני),
-ורק אחרי מפגשים פרונטליים (סוג_מפגש שמתחיל ב"פרונטלי") - לא אחרי זום.
-רצה כרוטינת ענן נפרדת סביב 16:00 שעון ישראל.
+לכל סוגי המפגשים (גם זום, גם פרונטלי) - אבל בשעה שונה לכל סוג, לפי בקשת
+מאיה 2026-08-24: מפגשי זום ב-14:00, מפגשים פרונטליים ב-15:00. שתי רוטינות
+ענן נפרדות מריצות את הסקריפט הזה בשעות שונות; RUN_HOUR_FILTER (בדיוק כמו
+ב-שלח_הודעה_לפי_תאריך_אוטומטי.py) קובע לאיזה סוג מפגש כל הרצה שייכת, כדי
+שאותה שורה לא תישלח פעמיים.
 
-לכל מפגש פרונטלי שחל היום (לפי לוח-מפגשים.csv):
+לכל מפגש שחל היום (לפי לוח-מפגשים.csv) ותואם את RUN_HOUR_FILTER של ההרצה:
 - אם יש chatId_ווטסאפ אמיתי (מסתיים ב-@g.us) וגם קיימת תבנית משימות לסוג המפגש
   -> שולח בפועל דרך Green API (מדיה+כיתוב מאוחדים אם מוגדרת מדיה במשימות_מדיה, אחרת טקסט בלבד).
 - אם משהו חסר -> לא שולח כלום, רק רושם ליומן.
@@ -29,6 +32,16 @@ LOG_FILE = HERE / "יומן-שליחות.log"
 CREDENTIALS_FILE = Path.home() / ".claude" / "local-secrets" / "green-api-credentials.json"
 
 MIME_TYPES = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png", ".mp4": "video/mp4"}
+
+# מיפוי סוג מפגש -> שעת השליחה שלו (בקשת מאיה 2026-08-24). כל סוג מפגש
+# עתידי חדש שיתווסף חייב תו להתחיל ב"זום" או "פרונטלי" כמו כל הסוגים
+# הקיימים, אחרת הוא ידולג עם אזהרה ביומן (ר' למטה) עד שיתווסף כאן.
+def expected_hour_for_type(session_type: str) -> str | None:
+    if session_type.startswith("זום"):
+        return "14"
+    if session_type.startswith("פרונטלי"):
+        return "15"
+    return None
 
 
 def log(line: str) -> None:
@@ -105,13 +118,23 @@ def main():
         log(f"שגיאה: אין פרטי גישה - לא ב-GREEN_API_ID_INSTANCE/GREEN_API_TOKEN_INSTANCE ולא ב-{CREDENTIALS_FILE}")
         return
 
+    run_hour_filter = os.environ.get("RUN_HOUR_FILTER", "").strip()
+
     due = []
     with schedule_file.open(encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            # אחרי כל סוג מפגש - פרונטלי או זום, לא רק פרונטלי
             session_date = datetime.strptime(row["תאריך_מפגש"], "%Y-%m-%d").date()
-            if session_date == today:  # אותו יום, לא יום לפני
-                due.append((row, session_date))
+            if session_date != today:  # אותו יום, לא יום לפני
+                continue
+            session_type = row["סוג_מפגש"]
+            expected_hour = expected_hour_for_type(session_type)
+            if expected_hour is None:
+                log(f"⚠️ סוג מפגש לא מוכר '{session_type}' (מחזור '{row['מחזור']}', {session_date}) - "
+                    f"אין לו שעת שליחה מוגדרת (expected_hour_for_type), מדלגת.")
+                continue
+            if run_hour_filter and expected_hour != run_hour_filter:
+                continue  # שייך לרוטינה של שעה אחרת - לא לזו
+            due.append((row, session_date))
 
     if not due:
         log(f"היום {today.isoformat()} - אין מפגש היום, אין הודעת משימות לשלוח.")
