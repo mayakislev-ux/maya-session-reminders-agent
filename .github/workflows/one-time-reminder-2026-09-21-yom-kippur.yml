@@ -1,0 +1,54 @@
+name: One-time reminder makeup send (2026-09-21, post-Yom Kippur, מחזור 6 מפגש-4)
+
+on:
+  schedule:
+    # 17:00 UTC = 20:00 Israel (UTC+3, DST active in September)
+    - cron: "0 17 21 9 *"
+  workflow_dispatch:
+    inputs:
+      real_send:
+        description: "true = actually revert the block and send for real (manual fallback). false/default = safe dry-run test of the mechanics only, touches nothing real."
+        required: false
+        default: "false"
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Safe dry-run test (manual trigger only, real_send=false)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.real_send != 'true'
+        run: |
+          echo "Dry-run test: confirming script + repo mechanics work, touching nothing real."
+          python3 שלח_תזכורות_אוטומטי.py 2026-09-13
+          grep "2026-09-22" "לוח-מפגשים.csv"
+
+      - name: Revert temporary Yom-Kippur block value (real send only)
+        if: github.event_name == 'schedule' || github.event.inputs.real_send == 'true'
+        run: |
+          sed -i 's/,זום-4-נשלח-ידנית-כיפור,מפגש-4,892697/,זום-4,מפגש-4,892697/' "לוח-מפגשים.csv"
+          grep "2026-09-22" "לוח-מפגשים.csv"
+
+      - name: Send the real reminder (real send only)
+        if: github.event_name == 'schedule' || github.event.inputs.real_send == 'true'
+        env:
+          GREEN_API_ID_INSTANCE: ${{ secrets.GREEN_API_ID_INSTANCE }}
+          GREEN_API_TOKEN_INSTANCE: ${{ secrets.GREEN_API_TOKEN_INSTANCE }}
+          CONFIRM_LIVE_SEND: "1"
+        run: |
+          python3 שלח_תזכורות_אוטומטי.py 2026-09-21
+
+      - name: Commit the reverted CSV back to the repo (real send only)
+        if: github.event_name == 'schedule' || github.event.inputs.real_send == 'true'
+        run: |
+          git config user.email "mayakislev@gmail.com"
+          git config user.name "Maya Kislev"
+          git add "לוח-מפגשים.csv"
+          git commit -m "Revert temporary Yom-Kippur reminder-block value (sent 20:00 post-fast makeup)" || echo "nothing to commit"
+          git push origin HEAD:master || echo "push skipped (workflow token may lack write access - revert manually if needed)"
